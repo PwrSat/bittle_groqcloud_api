@@ -1,15 +1,35 @@
+# === LLM Provider: Groq (cloud) ===
 langchain==0.2.10
+langchain-core>=0.2.22,<0.3.0
 langchain-community==0.2.9
-langchain-core==0.2.22
-langchain-openai==0.1.17
-langchain-text-splitters==0.2.2
-openai==1.36.0
-python-dotenv==1.0.1
-fastapi==0.111.1
-langserve==0.2.2
-sse_starlette==2.1.2
-requests==2.32.3
-pydub==0.25.1
-pyserial
+langchain-groq<0.2
+groq
+
+# === LLM Provider: GLM & Kimi (lokal via Ollama) ===
+# Install Ollama terpisah (bukan via pip): https://ollama.com/download
+# Model yang dipakai: glm-4.7-flash, richardyoung/kimi-vl-a3b-thinking
+langchain-ollama
+
+# === Environment / config ===
+python-dotenv
+
+# === Speech-to-Text (lokal via Faster-Whisper, GPU/CPU) ===
+faster-whisper
 SpeechRecognition
 PyAudio
+
+# === Text-to-Speech (gratis via gTTS, tanpa API key) ===
+gTTS
+pydub
+# ffmpeg WAJIB terinstall terpisah di sistem (bukan via pip):
+# winget install ffmpeg
+
+# === Komunikasi serial ke robot Bittle X V2 ===
+pyserial
+
+# === Catatan dependency conflict yang AMAN diabaikan ===
+# huggingface-hub (dipakai faster-whisper) minta click>=8.4.2, sedangkan
+# gTTS minta click<8.2. Keduanya cuma pakai `click` untuk fitur CLI
+# masing-masing (bukan untuk fungsi inti yang dipakai project ini), jadi
+# konflik versi ini TIDAK mempengaruhi fungsi program. `pip check` akan
+# tetap menampilkan warning ini -- aman diabaikan.

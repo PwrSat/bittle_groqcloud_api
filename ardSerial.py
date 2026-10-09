@@ -599,7 +599,10 @@ def testPort(PortList, serialObject, p):
                 getModelAndVersion(result)
             else:
                 serialObject.Close_Engine()
-                print('* Port ' + p + ' is not connected to a Petoi device!')
+                # print('* Port ' + p + ' is not connected to a Petoi device!')
+                # ^ di-nonaktifkan: ini cuma noise normal dari proses auto-scan
+                # port (nyoba semua COM port satu-satu), bukan error beneran.
+                pass
     #    sync +=1
     except Exception as e:
         print('* Port ' + p + ' cannot be opened!')

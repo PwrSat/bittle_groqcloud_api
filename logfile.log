@@ -1,4 +1,53 @@
-2024-09-02 10:05:35,365 ardSerial - INFO - ardSerial date: Jun. 20, 2024
-2024-09-02 10:05:39,882 ardSerial - INFO - *** Available serial ports: ***
-2024-09-02 10:05:39,883 ardSerial - INFO - COM11 
-2024-09-02 10:05:39,883 ardSerial - INFO - COM12 
+2026-10-09 14:04:06,111 ardSerial - INFO - ardSerial date: Jun. 20, 2024
+2026-10-09 14:04:07,563 ardSerial - INFO - *** Available serial ports: ***
+2026-10-09 14:04:07,563 ardSerial - INFO - COM4 
+2026-10-09 14:04:07,563 ardSerial - INFO - COM5 
+2026-10-09 14:04:07,563 ardSerial - INFO - COM3 
+2026-10-09 14:04:22,251 ardSerial - INFO - Connect to serial port list:
+2026-10-09 14:04:22,251 ardSerial - INFO - COM3
+2026-10-09 14:04:33,773 faster_whisper - INFO - Processing audio with duration 00:01.625
+2026-10-09 14:04:33,936 faster_whisper - INFO - VAD filter removed 00:00.601 of audio
+2026-10-09 14:04:36,574 faster_whisper - INFO - Detected language 'en' with probability 0.42
+2026-10-09 14:04:40,421 httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-10-09 14:04:49,801 faster_whisper - INFO - Processing audio with duration 00:01.486
+2026-10-09 14:04:49,801 faster_whisper - INFO - VAD filter removed 00:00.176 of audio
+2026-10-09 14:04:52,432 faster_whisper - INFO - Detected language 'en' with probability 0.94
+2026-10-09 14:04:56,226 httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-10-09 14:05:08,721 faster_whisper - INFO - Processing audio with duration 00:02.415
+2026-10-09 14:05:08,736 faster_whisper - INFO - VAD filter removed 00:00.208 of audio
+2026-10-09 14:05:11,298 faster_whisper - INFO - Detected language 'tl' with probability 0.77
+2026-10-09 14:05:15,487 httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-10-09 14:05:24,801 faster_whisper - INFO - Processing audio with duration 00:02.601
+2026-10-09 14:05:24,807 faster_whisper - INFO - VAD filter removed 00:00.144 of audio
+2026-10-09 14:05:27,383 faster_whisper - INFO - Detected language 'id' with probability 0.75
+2026-10-09 14:05:31,168 httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-10-09 14:05:40,382 faster_whisper - INFO - Processing audio with duration 00:02.624
+2026-10-09 14:05:40,398 faster_whisper - INFO - VAD filter removed 00:00.336 of audio
+2026-10-09 14:05:42,972 faster_whisper - INFO - Detected language 'id' with probability 0.89
+2026-10-09 14:05:46,905 httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-10-09 14:06:00,893 faster_whisper - INFO - Processing audio with duration 00:01.463
+2026-10-09 14:06:00,906 faster_whisper - INFO - VAD filter removed 00:00.144 of audio
+2026-10-09 14:06:03,484 faster_whisper - INFO - Detected language 'es' with probability 0.19
+2026-10-09 14:06:07,381 httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-10-09 14:06:25,619 faster_whisper - INFO - Processing audio with duration 00:01.718
+2026-10-09 14:06:25,619 faster_whisper - INFO - VAD filter removed 00:00.272 of audio
+2026-10-09 14:06:28,220 faster_whisper - INFO - Detected language 'ja' with probability 0.83
+2026-10-09 14:06:31,971 httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-10-09 14:06:42,374 faster_whisper - INFO - Processing audio with duration 00:01.370
+2026-10-09 14:06:42,379 faster_whisper - INFO - VAD filter removed 00:00.112 of audio
+2026-10-09 14:06:45,004 faster_whisper - INFO - Detected language 'ja' with probability 0.55
+2026-10-09 14:06:48,713 httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-10-09 14:07:00,486 faster_whisper - INFO - Processing audio with duration 00:01.765
+2026-10-09 14:07:00,486 faster_whisper - INFO - VAD filter removed 00:00.144 of audio
+2026-10-09 14:07:03,080 faster_whisper - INFO - Detected language 'en' with probability 0.72
+2026-10-09 14:07:06,761 httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-10-09 14:07:14,841 faster_whisper - INFO - Processing audio with duration 00:01.649
+2026-10-09 14:07:14,843 faster_whisper - INFO - VAD filter removed 00:00.112 of audio
+2026-10-09 14:07:17,443 faster_whisper - INFO - Detected language 'id' with probability 0.70
+2026-10-09 14:07:20,981 httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-10-09 14:07:34,485 faster_whisper - INFO - Processing audio with duration 00:02.972
+2026-10-09 14:07:34,498 faster_whisper - INFO - VAD filter removed 00:02.972 of audio
+2026-10-09 14:07:37,074 faster_whisper - INFO - Detected language 'en' with probability 0.52
+2026-10-09 14:07:41,353 faster_whisper - INFO - Processing audio with duration 00:02.461
+2026-10-09 14:07:41,353 faster_whisper - INFO - VAD filter removed 00:00.112 of audio
+2026-10-09 14:07:43,946 faster_whisper - INFO - Detected language 'id' with probability 0.66

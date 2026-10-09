@@ -1,5 +1,6 @@
+# config.py
 strLan = 'English'
 model_ = ''
 version_ = ''
 modelList = []
-useMindPlus = False
+useMindPlus = True   # ubah dari False ke True
