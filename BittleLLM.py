@@ -26,7 +26,7 @@ LLM_PROVIDER = "groq"        # "groq" (cloud) | "glm" | "kimi" (lokal, butuh Oll
 CONNECTION_MODE = "ble"      # "ble" (Bluetooth) | "serial" (kabel USB)
 ROBOT_BLE_ADDRESS = None     # isi MAC address robot (misal "AA:BB:CC:DD:EE:FF") biar
                              # tidak perlu scan 8 detik tiap start; None = scan otomatis
-MAX_HISTORY_MESSAGES = 20    # batasi riwayat chat (~10 giliran) biar hemat token
+MAX_HISTORY_MESSAGES = 10    # batasi riwayat chat (~10 giliran) biar hemat token
 COMMANDS_FILE = "Commands.json"
 
 # ================================================================
@@ -149,6 +149,10 @@ if __name__ == "__main__":
                 text_to_speech_stream("Maaf, aku lagi error. Coba lagi ya.", lang="id")
                 continue
             _elapsed = time.time() - _start
+
+            #cek penggunaan token
+            usage = response.response_metadata.get("token_usage", {})
+            print(f"[Token] masuk={usage.get('prompt_tokens')} keluar={usage.get('completion_tokens')}")
 
             # --- Ambil teks jawaban (fallback ke field cadangan kalau content kosong) ---
             raw_text = response.content
