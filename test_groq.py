@@ -1,5 +1,6 @@
 from groq import Groq
 
+#inggat api key hapus pas mau upload ke github 
 client = Groq(api_key="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")
 
 response = client.chat.completions.create(

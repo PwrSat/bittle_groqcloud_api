@@ -15,7 +15,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from speechtotext import listen_and_transcribe
 from Text2Speech import text_to_speech_stream
 from robot_link import create_robot
-from llm_utils import get_model, strip_thinking, extract_final_reply, is_exit_command
+from llm_utils import get_model, strip_thinking, extract_final_reply, is_exit_command, token_counter
+import motion_gen
 
 load_dotenv()
 
@@ -26,8 +27,10 @@ LLM_PROVIDER = "groq"        # "groq" (cloud) | "glm" | "kimi" (lokal, butuh Oll
 CONNECTION_MODE = "ble"      # "ble" (Bluetooth) | "serial" (kabel USB)
 ROBOT_BLE_ADDRESS = None     # isi MAC address robot (misal "AA:BB:CC:DD:EE:FF") biar
                              # tidak perlu scan 8 detik tiap start; None = scan otomatis
-MAX_HISTORY_MESSAGES = 10    # batasi riwayat chat (~10 giliran) biar hemat token
+MAX_HISTORY_MESSAGES = 20    # batasi riwayat chat (~10 giliran) biar hemat token
 COMMANDS_FILE = "Commands.json"
+MOTION_DRY_RUN = False       # True = gerakan motor cuma DITAMPILKAN di terminal, robot tidak bergerak.
+                             # Ubah ke False setelah rencana gerakan terlihat masuk akal.
 
 # ================================================================
 # SETUP LLM
@@ -93,6 +96,10 @@ SYSTEM_PROMPT = (
     + escaped_commands_json +
     " Contoh: pengguna bilang 'ayo lompat' -> 'Ayo lompat! ##kjmp##'; "
     "pengguna bilang \"let's jump\" -> \"Let's jump! ##kjmp##\". "
+    "ATURAN GERAKAN KHUSUS: jika pengguna minta gerakan pada bagian tubuh yang TIDAK ada "
+    "di daftar command (contoh: gelengkan kepala, tengok kiri-kanan, celingukan, toleh), "
+    "jawab singkat lalu pakai command ##motion## (BUKAN command dari daftar). Saat ini "
+    "hanya KEPALA yang bisa digerakkan khusus (menoleh kiri-kanan), kepala tidak bisa mengangguk. "
     "Selalu taruh command di bagian PALING AKHIR jawaban dengan format ##kode##, "
     "tanpa teks apapun setelahnya. Jika kalimat pengguna bukan permintaan gerakan "
     "(misalnya cuma ngobrol), tetap jawab singkat dan pilih satu command yang cocok "
@@ -149,10 +156,9 @@ if __name__ == "__main__":
                 text_to_speech_stream("Maaf, aku lagi error. Coba lagi ya.", lang="id")
                 continue
             _elapsed = time.time() - _start
-
-            #cek penggunaan token
-            usage = response.response_metadata.get("token_usage", {})
-            print(f"[Token] masuk={usage.get('prompt_tokens')} keluar={usage.get('completion_tokens')}")
+            p_tok, c_tok = token_counter.add(response)
+            print(f"[Token] masuk={p_tok} keluar={c_tok} | total sesi={token_counter.total} "
+                  f"({token_counter.calls} panggilan)")
 
             # --- Ambil teks jawaban (fallback ke field cadangan kalau content kosong) ---
             raw_text = response.content
@@ -167,6 +173,21 @@ if __name__ == "__main__":
             if not description:
                 print(f"[Peringatan] AI tidak menghasilkan jawaban final [{_elapsed:.1f}s].")
                 text_to_speech_stream("Maaf, aku belum sempat mikir jawabannya. Coba lagi ya.", lang="id")
+
+            elif dogcommand == "motion":
+                # Gerakan motor khusus: LLM menyusun rencana, divalidasi ketat, baru dieksekusi
+                print(f"[Bittle]: {description}  (gerakan khusus)  [{_elapsed:.1f}s]")
+                text_to_speech_stream(description, lang=detected_lang)
+                try:
+                    steps, warnings = motion_gen.plan_from_request(model, user_input)
+                    for w in warnings:
+                        print(f"[Validasi gerakan] {w}")
+                    if steps:
+                        motion_gen.execute_plan(robot, steps, dry_run=MOTION_DRY_RUN)
+                    else:
+                        print("[Gerakan] Tidak ada langkah valid, tidak ada yang dijalankan.")
+                except Exception as e:
+                    print(f"[Error gerakan] {e}")
 
             elif dogcommand and dogcommand in VALID_COMMANDS:
                 print(f"[Bittle]: {description}  (command: {dogcommand})  [{_elapsed:.1f}s]")
@@ -187,4 +208,6 @@ if __name__ == "__main__":
         robot.send("kup")
     finally:
         robot.close()
+        print(f"[Token] Ringkasan sesi: masuk={token_counter.prompt} keluar={token_counter.completion} "
+              f"total={token_counter.total} dalam {token_counter.calls} panggilan")
         print("Program berhenti dengan bersih.")

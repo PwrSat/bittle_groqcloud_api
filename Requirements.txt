@@ -1,35 +1,31 @@
-# === LLM Provider: Groq (cloud) ===
+# Python 3.11 (64-bit) -- jangan 3.13 (numpy gagal compile dengan stack langchain ini)
+
+# === LLM: GroqCloud ===
 langchain==0.2.10
 langchain-core>=0.2.22,<0.3.0
 langchain-community==0.2.9
 langchain-groq<0.2
 groq
 
-# === LLM Provider: GLM & Kimi (lokal via Ollama) ===
-# Install Ollama terpisah (bukan via pip): https://ollama.com/download
-# Model yang dipakai: glm-4.7-flash, richardyoung/kimi-vl-a3b-thinking
-langchain-ollama
-
-# === Environment / config ===
+# === Config (.env: GROQ_API_KEY, opsional BITTLE_BLE_ADDRESS) ===
 python-dotenv
 
-# === Speech-to-Text (lokal via Faster-Whisper, GPU/CPU) ===
+# === Speech-to-Text (lokal, CPU) ===
 faster-whisper
 SpeechRecognition
 PyAudio
 
-# === Text-to-Speech (gratis via gTTS, tanpa API key) ===
+# === Text-to-Speech (gratis, tanpa API key) ===
 gTTS
 pydub
-# ffmpeg WAJIB terinstall terpisah di sistem (bukan via pip):
-# winget install ffmpeg
+# ffmpeg diinstall terpisah di Windows:  winget install ffmpeg
 
-# === Komunikasi serial ke robot Bittle X V2 ===
-pyserial
+# === Koneksi robot ===
+bleak         # Bluetooth BLE  (robot_link.py -> mode "ble")
+pyserial      # USB serial     (ardSerial.py  -> mode "serial")
 
-# === Catatan dependency conflict yang AMAN diabaikan ===
-# huggingface-hub (dipakai faster-whisper) minta click>=8.4.2, sedangkan
-# gTTS minta click<8.2. Keduanya cuma pakai `click` untuk fitur CLI
-# masing-masing (bukan untuk fungsi inti yang dipakai project ini), jadi
-# konflik versi ini TIDAK mempengaruhi fungsi program. `pip check` akan
-# tetap menampilkan warning ini -- aman diabaikan.
+# === OPSIONAL: model lokal GLM/Kimi (butuh Ollama + GPU kuat; TIDAK perlu di laptop ini) ===
+# langchain-ollama
+
+# Catatan: `pip check` bisa menampilkan konflik versi "click" antara gTTS dan
+# huggingface-hub. Aman diabaikan, tidak mempengaruhi program.

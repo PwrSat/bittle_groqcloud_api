@@ -1,4 +1,11 @@
+import os
 import re
+
+# Matikan tracing LangSmith (tidak dipakai; kalau .env masih berisi
+# LANGCHAIN_TRACING_V2=true dari repo lama, ini bikin error 403 + delay).
+# Diset paling awal & dipaksa, karena load_dotenv() tidak menimpa env yang sudah ada.
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["LANGSMITH_TRACING"] = "false"
 
 
 def strip_thinking(text: str) -> str:
@@ -148,3 +155,30 @@ def is_exit_command(text: str) -> bool:
         return False
     text_lower = text.lower()
     return any(keyword in text_lower for keyword in _EXIT_KEYWORDS)
+
+
+class TokenCounter:
+    """Catat pemakaian token selama sesi (dibaca dari metadata respons LLM)."""
+
+    def __init__(self):
+        self.prompt = 0
+        self.completion = 0
+        self.calls = 0
+
+    def add(self, response):
+        meta = getattr(response, "response_metadata", None) or {}
+        usage = meta.get("token_usage") or {}
+        # Groq: token_usage{prompt_tokens, completion_tokens}; Ollama: prompt_eval_count/eval_count
+        p = usage.get("prompt_tokens") or meta.get("prompt_eval_count") or 0
+        c = usage.get("completion_tokens") or meta.get("eval_count") or 0
+        self.prompt += p
+        self.completion += c
+        self.calls += 1
+        return p, c
+
+    @property
+    def total(self):
+        return self.prompt + self.completion
+
+
+token_counter = TokenCounter()

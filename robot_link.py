@@ -13,6 +13,7 @@ BLE memakai Nordic UART Service milik BiBoard (ESP32), sesuai panduan Petoi:
 Format data persis sama dengan serial: teks skill + newline, contoh b"ksit\n".
 """
 import asyncio
+import os
 import threading
 import time
 
@@ -36,6 +37,13 @@ class SerialRobot:
     def send(self, skill):
         self._ard.send(self._ports, [skill, 1])
 
+    def send_joints(self, angles):
+        """Gerakkan beberapa motor sekaligus. angles = {index_motor: sudut}."""
+        flat = []
+        for idx, ang in angles.items():
+            flat += [int(idx), int(ang)]
+        self._ard.send(self._ports, ["i", flat, 0])   # format resmi Petoi: ['i', [idx, sudut, ...], delay]
+
     def close(self):
         for p in list(self._ports.keys()):
             try:
@@ -53,7 +61,8 @@ class BleRobot:
         address     : MAC address BLE robot (opsional, lebih cepat kalau diisi)
         name_prefix : kalau address kosong, cari device yang namanya diawali ini
         """
-        self._address = address
+        # alamat bisa juga diisi lewat .env: BITTLE_BLE_ADDRESS=AA:BB:CC:DD:EE:FF
+        self._address = address or os.getenv("BITTLE_BLE_ADDRESS")
         self._name_prefix = name_prefix
         self._scan_time = scan_time
         self._client = None
@@ -64,7 +73,7 @@ class BleRobot:
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._thread.start()
 
-        self._run(self._connect(), timeout=scan_time + 20)
+        self._run(self._connect(), timeout=scan_time * 2 + 20)
 
     # --- helper ---
     def _run(self, coro, timeout=10):
@@ -72,15 +81,20 @@ class BleRobot:
 
     async def _find_device(self):
         from bleak import BleakScanner
-        print(f"[BLE] Scan {self._scan_time:.0f} detik...")
-        found = await BleakScanner.discover(timeout=self._scan_time, return_adv=True)
-        for addr, (dev, adv) in found.items():
-            name = dev.name or adv.local_name or ""
-            has_nus = NUS_SERVICE.lower() in [u.lower() for u in (adv.service_uuids or [])]
-            # abaikan versi "_SSP" (itu Bluetooth classic, bukan BLE)
-            if (name.startswith(self._name_prefix) and not name.endswith("_SSP")) or has_nus:
-                print(f"[BLE] Ketemu: {name or '(tanpa nama)'}  [{addr}]")
-                return addr
+        seen = []
+        for attempt in (1, 2):   # BLE advertising kadang telat, jadi scan 2x
+            print(f"[BLE] Scan {self._scan_time:.0f} detik (percobaan {attempt}/2)...")
+            found = await BleakScanner.discover(timeout=self._scan_time, return_adv=True)
+            for addr, (dev, adv) in found.items():
+                name = dev.name or adv.local_name or ""
+                seen.append(name or "(tanpa nama)")
+                has_nus = NUS_SERVICE.lower() in [u.lower() for u in (adv.service_uuids or [])]
+                # abaikan versi "_SSP" (itu Bluetooth classic, bukan BLE)
+                if (name.startswith(self._name_prefix) and not name.endswith("_SSP")) or has_nus:
+                    print(f"[BLE] Ketemu: {name or '(tanpa nama)'}  [{addr}]")
+                    return addr
+        print("[BLE] Tidak ada yang cocok. Device yang terlihat: "
+              + (", ".join(sorted(set(seen))[:15]) or "(tidak ada sama sekali)"))
         return None
 
     async def _connect(self):
@@ -113,6 +127,14 @@ class BleRobot:
             self._run(self._write(data), timeout=5)
         except Exception as e:
             print(f"[BLE] Gagal kirim '{skill}': {e}")
+
+    def send_joints(self, angles):
+        """Gerakkan beberapa motor sekaligus. angles = {index_motor: sudut}.
+        Dikirim sebagai teks 'i 0 40 8 -20' (protokol serial Petoi)."""
+        parts = []
+        for idx, ang in angles.items():
+            parts += [str(int(idx)), str(int(ang))]
+        self.send("i " + " ".join(parts))
 
     def close(self):
         try:

@@ -8,7 +8,7 @@ from Text2Speech import text_to_speech_stream
 # Load model Whisper SEKALI SAJA saat modul di-import (bukan tiap kali
 # transcribe), supaya tidak reload model setiap giliran bicara.
 # ================================================================
-_model = WhisperModel("medium", device="cpu", compute_type="int8")
+_model = WhisperModel("small", device="cpu", compute_type="int8")
 
 # Bahasa yang "diharapkan" dipakai user -> kalau Whisper nebak salah
 # satu dari ini, PERCAYA walau confidence-nya rendah. Kalimat pendek
