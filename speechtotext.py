@@ -1,98 +1,153 @@
 import io
+import re
 import time
-import speech_recognition as sr
-from faster_whisper import WhisperModel
-from Text2Speech import text_to_speech_stream
 
-# ================================================================
-# Load model Whisper SEKALI SAJA saat modul di-import (bukan tiap kali
-# transcribe), supaya tidak reload model setiap giliran bicara.
-# ================================================================
-_model = WhisperModel("small", device="cpu", compute_type="int8")
+# None = deteksi otomatis multibahasa. Pilih "id" jika seluruh sesi berbahasa
+# Indonesia; ini menghindari salah tebak bahasa pada perintah satu kata.
+STT_LANGUAGE = None
+WHISPER_MODEL = "small"
 
-# Bahasa yang "diharapkan" dipakai user -> kalau Whisper nebak salah
-# satu dari ini, PERCAYA walau confidence-nya rendah. Kalimat pendek
-# (misal "STOP!", "Can you walk?") itu SECARA ALAMI confidence-nya
-# rendah di Whisper walau tebakannya tetap akurat -- jadi nolak
-# berdasarkan angka confidence doang malah bikin salah.
-EXPECTED_LANGUAGES = {"id", "en", "ja", "zh", "ko", "ar", "fr", "de", "es"}
+# Petunjuk ejaan untuk decoder, bukan daftar jawaban yang wajib dihasilkan.
+COMMAND_HINTS = (
+    "Bittle, duduk, berdiri, jalan, maju, mundur, berhenti, diam, lompat, "
+    "salam, tidur, istirahat, tengok kanan, tengok kiri, geleng kepala, "
+    "udahan dulu, sit, stand, walk, stop, jump, hello"
+)
+LANGUAGE_CONFIDENCE_THRESHOLD = 0.6
 
-# Threshold ini CUMA dipakai kalau bahasa yang terdeteksi di LUAR
-# daftar expected (kemungkinan besar salah tebak total, kayak kasus
-# "Konichiwa" -> Swahili) -- butuh confidence tinggi baru dipercaya
-UNEXPECTED_LANG_THRESHOLD = 0.6
+_model = None
+_recognizer = None
+_microphone = None
+_calibrated = False
 
-# Bahasa terakhir yang terdeteksi dengan YAKIN, dipakai sebagai fallback
-_last_confident_lang = "id"
+
+def _get_model():
+    """Muat model sekali, hanya ketika pengenalan suara benar-benar dipakai."""
+    global _model
+    if _model is None:
+        from faster_whisper import WhisperModel
+
+        print(f"[Sistem] Memuat Whisper {WHISPER_MODEL}...")
+        _model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+        print("[Sistem] Whisper siap.")
+    return _model
+
+
+def initialize_transcriber():
+    """Siapkan model sebelum koneksi BLE, tanpa membuka mikrofon.
+
+    Pada lingkungan Windows proyek ini, memuat model native CTranslate2
+    setelah backend BLE/WinRT diimpor dapat menyebabkan access violation.
+    Impor modul ini tetap ringan; aplikasi memanggil initializer secara eksplisit.
+    """
+    return _get_model()
+
+
+def _get_audio_devices():
+    """Pertahankan ambang suara antar giliran, termasuk adaptasi suara latar."""
+    global _recognizer, _microphone
+    import speech_recognition as sr
+
+    if _recognizer is None:
+        _recognizer = sr.Recognizer()
+        _recognizer.pause_threshold = 1.0
+    if _microphone is None:
+        _microphone = sr.Microphone()
+    return _recognizer, _microphone
+
+
+def normalize_transcript(text, language, confidence):
+    """Saring hasil kosong dan koreksi hanya salah dengar satu perintah utuh.
+
+    Tidak memakai fuzzy matching: kalimat seperti 'jangan duduk' atau cerita
+    yang mengandung 'duh duk' harus tetap utuh. Bahasa lain yang terdeteksi
+    dengan yakin juga tidak diubah menjadi perintah Indonesia.
+    """
+    cleaned = " ".join(text.split())
+    if not any(char.isalnum() for char in cleaned):
+        return "", language, False
+
+    words = " ".join(re.findall(r"[^\W\d_]+", cleaned.casefold()))
+    # Alias ini berasal dari salah transkripsi yang terlihat pada log pengguna.
+    # Pencocokan dibatasi ke seluruh ujaran, termasuk pengulangan perintah.
+    sit_alias = r"(?:duduk|duh duk|doudouk)"
+    if (
+        (language == "id" or confidence < LANGUAGE_CONFIDENCE_THRESHOLD)
+        and not any(char.isdigit() for char in cleaned)
+        and re.fullmatch(rf"{sit_alias}(?: {sit_alias})*", words)
+    ):
+        corrected = cleaned != "duduk" or language != "id"
+        return "duduk", "id", corrected
+
+    return cleaned, language, False
 
 
 def listen_and_transcribe():
+    """Rekam satu ucapan dan kembalikan (teks, bahasa), atau (None, None).
+
+    Autodeteksi tetap menerima ucapan multibahasa. Probabilitas bahasa rendah
+    bukan bukti bahwa isi teks salah, sehingga tidak sekadar mengganti tag
+    bahasanya tanpa mengenali ulang audio.
     """
-    Rekam suara dari mic, transkripsi pakai Whisper dengan AUTO-DETECT
-    bahasa (mendukung banyak bahasa, tidak dikunci ke Bahasa Indonesia
-    saja) supaya robot bisa diajak bicara multibahasa.
+    global _calibrated
 
-    Return: (text, lang_code) atau (None, None) kalau tidak ada suara
-    valid yang tertangkap. lang_code contoh: "id", "en", "ja", "zh", dst
-    (kode ISO 639-1 yang dideteksi Whisper).
-    """
-    global _last_confident_lang
-
-    recognizer = sr.Recognizer()
-    microphone = sr.Microphone()
-
-    recognizer.pause_threshold = 1.0
+    # Gagal memuat model/perangkat harus terlihat oleh pemanggil, bukan menjadi
+    # pengulangan tanpa henti karena loop utama mengabaikan hasil kosong.
+    model = _get_model()
+    recognizer, microphone = _get_audio_devices()
 
     with microphone as source:
+        if not _calibrated:
+            print("[Sistem] Kalibrasi mikrofon: diam sebentar...")
+            recognizer.adjust_for_ambient_noise(source, duration=1)
+            _calibrated = True
+
+        # Tampilkan tanda siap SETELAH kalibrasi, agar awal kata tidak
+        # terpakai sebagai sampel suara latar dan hilang dari rekaman.
         print("Talk...")
-        recognizer.adjust_for_ambient_noise(source, duration=1)
         audio = recognizer.listen(source, timeout=None, phrase_time_limit=10)
 
     try:
-        wav_bytes = audio.get_wav_data()
-        wav_stream = io.BytesIO(wav_bytes)
-
-        _t0 = time.time()
-        segments, info = _model.transcribe(
+        wav_stream = io.BytesIO(audio.get_wav_data())
+        started = time.perf_counter()
+        segments, info = model.transcribe(
             wav_stream,
+            language=STT_LANGUAGE,
+            hotwords=COMMAND_HINTS,
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=500),
             condition_on_previous_text=False,
         )
-        text = " ".join(segment.text for segment in segments).strip()
-        _elapsed = time.time() - _t0
+        raw_text = " ".join(segment.text for segment in segments).strip()
+        text, detected_lang, corrected = normalize_transcript(
+            raw_text, info.language, info.language_probability
+        )
+        elapsed = time.perf_counter() - started
 
         if not text:
-            print(f"[Sistem] Whisper: tidak ada suara valid [{_elapsed:.1f}s]")
+            print(f"[Sistem] Whisper: tidak ada teks ucapan valid [{elapsed:.1f}s]")
             return None, None
 
-        detected_lang = info.language
-        confidence = info.language_probability
+        if corrected:
+            print(f"[Sistem] Koreksi perintah: {raw_text!r} -> {text!r}")
 
-        # Logic baru: percaya tebakan Whisper kalau bahasanya masuk akal
-        # (ada di EXPECTED_LANGUAGES), WALAU confidence-nya rendah --
-        # karena kalimat pendek emang secara alami confidence-nya rendah
-        # tapi tebakannya biasanya tetap benar.
-        if detected_lang in EXPECTED_LANGUAGES:
-            _last_confident_lang = detected_lang
-        elif confidence >= UNEXPECTED_LANG_THRESHOLD:
-            # Bahasa "aneh"/di luar expected, tapi confidence-nya tinggi
-            # -> tetap percaya, mungkin beneran bahasa itu
-            _last_confident_lang = detected_lang
+        if STT_LANGUAGE is not None:
+            language_note = "bahasa ditetapkan, tanpa deteksi otomatis"
+        elif detected_lang != info.language:
+            language_note = (
+                f"deteksi awal: {info.language}, "
+                f"keyakinan bahasa: {info.language_probability:.0%}"
+            )
         else:
-            # Bahasa aneh DAN confidence rendah -> kemungkinan besar
-            # salah tebak total (kayak kasus Konichiwa -> Swahili)
-            print(f"[Sistem] Deteksi bahasa '{detected_lang}' di luar ekspektasi, "
-                  f"confidence rendah ({confidence:.0%}) -> pakai bahasa terakhir "
-                  f"yang yakin: '{_last_confident_lang}'")
-            detected_lang = _last_confident_lang
-
-        print(f"[Sistem] Transkripsi selesai [{_elapsed:.1f}s]. "
-              f"Bahasa: {detected_lang} (confidence: {confidence:.0%})")
+            language_note = f"keyakinan bahasa: {info.language_probability:.0%}"
+        print(
+            f"[Sistem] Transkripsi selesai [{elapsed:.1f}s]. "
+            f"Bahasa: {detected_lang} ({language_note})"
+        )
         return text, detected_lang
 
     except Exception as e:
-        print(f"Error saat transkripsi Whisper: {e}")
+        print(f"Error saat pengenalan suara: {e}")
         return None, None
 
 

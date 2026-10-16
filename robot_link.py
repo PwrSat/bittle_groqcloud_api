@@ -13,6 +13,7 @@ BLE memakai Nordic UART Service milik BiBoard (ESP32), sesuai panduan Petoi:
 Format data persis sama dengan serial: teks skill + newline, contoh b"ksit\n".
 """
 import asyncio
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import os
 import threading
 import time
@@ -35,14 +36,21 @@ class SerialRobot:
             raise RuntimeError("Robot tidak ditemukan lewat serial/USB.")
 
     def send(self, skill):
-        self._ard.send(self._ports, [skill, 1])
+        result = self._ard.send(self._ports, [skill, 0], timeout=10)
+        if result == -1:
+            raise RuntimeError(f"Gagal mengirim '{skill}' melalui serial/USB.")
+        return True
 
     def send_joints(self, angles):
         """Gerakkan beberapa motor sekaligus. angles = {index_motor: sudut}."""
         flat = []
         for idx, ang in angles.items():
             flat += [int(idx), int(ang)]
-        self._ard.send(self._ports, ["i", flat, 0])   # format resmi Petoi: ['i', [idx, sudut, ...], delay]
+        # Jeda antaraksi diatur oleh penjadwal, bukan lapisan koneksi.
+        result = self._ard.send(self._ports, ["i", flat, 0], timeout=5)
+        if result == -1:
+            raise RuntimeError("Gagal mengirim sudut motor melalui serial/USB.")
+        return True
 
     def close(self):
         for p in list(self._ports.keys()):
@@ -77,7 +85,14 @@ class BleRobot:
 
     # --- helper ---
     def _run(self, coro, timeout=10):
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout)
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        try:
+            return future.result(timeout)
+        except FutureTimeoutError:
+            # Jangan biarkan sisa paket terkirim setelah penjadwal membatalkan
+            # antrean dan mengirim perintah berhenti.
+            future.cancel()
+            raise
 
     async def _find_device(self):
         from bleak import BleakScanner
@@ -104,7 +119,7 @@ class BleRobot:
             raise RuntimeError(
                 "Robot BLE tidak ketemu. Pastikan robot nyala, jarak dekat, "
                 "tidak sedang tersambung ke HP/aplikasi Petoi, dan Bluetooth "
-                "laptop aktif. Jalankan test_ble.py --scan buat lihat daftar device."
+                "laptop aktif. Jalankan tools/check_ble.py --scan buat lihat daftar device."
             )
         self._address = addr
         self._client = BleakClient(addr)
@@ -126,7 +141,8 @@ class BleRobot:
                 self._run(self._connect(), timeout=30)
             self._run(self._write(data), timeout=5)
         except Exception as e:
-            print(f"[BLE] Gagal kirim '{skill}': {e}")
+            raise RuntimeError(f"[BLE] Gagal kirim '{skill}': {e}") from e
+        return True
 
     def send_joints(self, angles):
         """Gerakkan beberapa motor sekaligus. angles = {index_motor: sudut}.
@@ -134,7 +150,7 @@ class BleRobot:
         parts = []
         for idx, ang in angles.items():
             parts += [str(int(idx)), str(int(ang))]
-        self.send("i " + " ".join(parts))
+        return self.send("i " + " ".join(parts))
 
     def close(self):
         try:

@@ -1,12 +1,17 @@
 """
 Test koneksi Bluetooth ke Bittle, TANPA LLM/suara.
 
-    python test_ble.py --scan      # lihat semua device BLE di sekitar
-    python test_ble.py             # connect, duduk, berdiri, putus
+    python tools/check_ble.py --scan      # lihat semua device BLE di sekitar
+    python tools/check_ble.py             # connect, duduk, berdiri, putus
 """
 import sys
 import time
 import asyncio
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 async def scan():

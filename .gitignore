@@ -1,3 +1,8 @@
 # Mengabaikan folder virtual environment
 venv/
 .env
+
+# Berkas hasil menjalankan Python dan aplikasi
+__pycache__/
+*.py[cod]
+*.log

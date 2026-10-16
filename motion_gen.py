@@ -49,6 +49,8 @@ MIN_MOVE_S = 0.15             # durasi minimum satu perpindahan
 # Kirim perintah 'i' kosong di akhir untuk melepas kontrol manual kepala.
 # Kalau kepala terasa kaku/aneh SETELAH gerakan, coba ubah ke False.
 RELEASE_HEAD_AFTER = True
+HEAD_NEUTRAL_SETTLE_S = 0.2
+HEAD_RELEASE_SETTLE_S = 0.3  # waktu firmware memproses 'i' sebelum perintah berikutnya
 
 RIGHT_WORDS = ("kanan", "right", "migi", "右")
 LEFT_WORDS = ("kiri", "left", "hidari", "左")
@@ -245,6 +247,7 @@ def execute_plan(robot, steps, dry_run=True):
     """Jalankan langkah-langkah gerakan, lalu SELALU kembalikan motor ke netral."""
     current = {}      # sudut terakhir yang dikirim per motor (anggap mulai dari netral)
     used = set()
+    original_error = None
     try:
         for n, step in enumerate(steps, 1):
             target = {j: a * JOINT_SIGN.get(j, 1) for j, a in step["joints"].items()}
@@ -253,14 +256,27 @@ def execute_plan(robot, steps, dry_run=True):
                   + ("  (DRY-RUN, tidak dikirim)" if dry_run else ""))
             _move_to(robot, current, target, dry_run)
             time.sleep(step["hold"])
+    except BaseException as e:
+        original_error = e
+        raise
     finally:
         # kembali netral -- dijalankan walau ada error/Ctrl+C di tengah
         if used and not dry_run:
-            head_like = {j: NEUTRAL_ANGLE for j in used if j < 8}
-            if head_like:
-                _move_to(robot, current, head_like, False)
-                if RELEASE_HEAD_AFTER:
-                    time.sleep(0.2)
-                    robot.send("i")    # lepaskan kontrol manual kepala (sesuai dokumentasi Petoi)
-            if any(j >= 8 for j in used):
-                robot.send("kup")      # motor kaki: kembali ke pose berdiri
+            try:
+                head_like = {j: NEUTRAL_ANGLE for j in used if j < 8}
+                if head_like:
+                    _move_to(robot, current, head_like, False)
+                    if RELEASE_HEAD_AFTER:
+                        time.sleep(HEAD_NEUTRAL_SETTLE_S)
+                        robot.send("i")    # lepaskan kontrol manual kepala
+                        # BLE write selesai belum berarti firmware telah membaca
+                        # perintah. Jangan biarkan 'i\n' bergabung dengan skill
+                        # berikutnya di buffer penerima BLE OpenCat.
+                        print(f"  [Gerakan] Jeda setelah melepas kontrol kepala: {HEAD_RELEASE_SETTLE_S:g}s")
+                        time.sleep(HEAD_RELEASE_SETTLE_S)
+                if any(j >= 8 for j in used):
+                    robot.send("kup")      # motor kaki: kembali ke pose berdiri
+            except Exception as cleanup_error:
+                if original_error is None:
+                    raise
+                print(f"[Gerakan] Gagal kembali netral: {cleanup_error}")

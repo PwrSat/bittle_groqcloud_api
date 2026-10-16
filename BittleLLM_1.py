@@ -1,7 +1,8 @@
 import sys
 import time
+from pathlib import Path
 
-from speechtotext import listen_and_transcribe
+from speechtotext import initialize_transcriber, listen_and_transcribe
 from Text2Speech import text_to_speech_stream
 from ardSerial import *
 import speech_recognition as sr
@@ -19,7 +20,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from llm_utils import get_model, strip_thinking, extract_final_reply, is_exit_command
 import re
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parent
+load_dotenv(PROJECT_ROOT / ".env")
 
 # ================================================================
 # PILIH PROVIDER LLM DI SINI: "groq", "glm", atau "kimi"
@@ -29,6 +31,7 @@ load_dotenv()
 # ================================================================
 LLM_PROVIDER = "groq"
 
+initialize_transcriber()
 model = get_model(LLM_PROVIDER)
 print(f"[Sistem] Menggunakan provider LLM: {LLM_PROVIDER}")
 
@@ -54,7 +57,7 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
 # Baca Commands.json DULUAN (sebelum bikin system prompt), supaya bisa
 # di-embed langsung ke instruksi -> tidak perlu lagi priming call
 # terpisah yang bikin startup lambat & numpuk riwayat chat dari awal.
-file_path = 'Commands.json'
+file_path = PROJECT_ROOT / "Commands.json"
 with open(file_path, 'r', encoding='utf-8') as file:
     file_content = file.read()
 
@@ -84,7 +87,7 @@ chain = prompt | model
 config = {"configurable": {"session_id": "firstChat"}}
 with_message_history = RunnableWithMessageHistory(chain, get_session_history)
 
-print("Bittle siap! Silakan mulai berbicara.")
+print("Bittle terhubung. Tunggu 'Talk...' sebelum mulai berbicara.")
 
 if __name__ == "__main__":
 

@@ -1,7 +1,7 @@
 import os
-import re
 import json
 import time
+from pathlib import Path
 
 # Matikan tracing LangSmith (tidak dipakai, cuma bikin error 403 & delay)
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
@@ -12,13 +12,14 @@ from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMess
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from speechtotext import listen_and_transcribe
+from speechtotext import initialize_transcriber, listen_and_transcribe
 from Text2Speech import text_to_speech_stream
 from robot_link import create_robot
-from llm_utils import get_model, strip_thinking, extract_final_reply, is_exit_command, token_counter
-import motion_gen
+from llm_utils import get_model, strip_thinking, is_exit_command, token_counter
+import action_sequence
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parent
+load_dotenv(PROJECT_ROOT / ".env")
 
 # ================================================================
 # PENGATURAN UTAMA
@@ -28,13 +29,15 @@ CONNECTION_MODE = "ble"      # "ble" (Bluetooth) | "serial" (kabel USB)
 ROBOT_BLE_ADDRESS = None     # isi MAC address robot (misal "AA:BB:CC:DD:EE:FF") biar
                              # tidak perlu scan 8 detik tiap start; None = scan otomatis
 MAX_HISTORY_MESSAGES = 20    # batasi riwayat chat (~10 giliran) biar hemat token
-COMMANDS_FILE = "Commands.json"
-MOTION_DRY_RUN = False       # True = gerakan motor cuma DITAMPILKAN di terminal, robot tidak bergerak.
-                             # Ubah ke False setelah rencana gerakan terlihat masuk akal.
+COMMANDS_FILE = PROJECT_ROOT / "Commands.json"
+ACTION_DRY_RUN = False       # True = semua aksi hanya DITAMPILKAN, tanpa dikirim ke robot.
 
 # ================================================================
 # SETUP LLM
 # ================================================================
+# Muat Whisper sebelum LLM dan backend BLE/WinRT agar inisialisasi native
+# tidak mengalami access violation pada Windows. Mikrofon belum dibuka.
+initialize_transcriber()
 model = get_model(LLM_PROVIDER)
 print(f"[Sistem] Provider LLM: {LLM_PROVIDER}")
 
@@ -75,40 +78,13 @@ with open(COMMANDS_FILE, "r", encoding="utf-8") as f:
 # Kode command yang VALID -> dipakai buat validasi sebelum kirim ke robot
 VALID_COMMANDS = set(json.loads(commands_json_text).values())
 
-# Escape { } supaya JSON tidak dianggap placeholder template oleh LangChain
-escaped_commands_json = commands_json_text.replace("{", "{{").replace("}", "}}")
-
-SYSTEM_PROMPT = (
-    "Kamu adalah Bittle, robot anjing peliharaan yang ramah dan antusias. "
-    "Pengguna berbicara padamu lewat suara dan kamu menjawab sebagai robot anjing, "
-    "sekaligus menerjemahkan maksud kalimatnya menjadi command gerakan. "
-    "ATURAN BAHASA: jawab SELALU dalam bahasa yang SAMA dengan bahasa pengguna "
-    "(Indonesia dijawab Indonesia, Inggris dijawab Inggris, dst). Di awal tiap pesan "
-    "ada tag seperti '[bahasa: en]' yang menunjukkan bahasa terdeteksi; gunakan itu "
-    "sebagai acuan dan JANGAN tulis tag itu dalam jawabanmu. "
-    "ATURAN PANJANG: jawaban HARUS singkat, maksimal 1 kalimat pendek (5-12 kata), "
-    "natural seperti anjing peliharaan. Beri jawaban lebih panjang HANYA jika pengguna "
-    "secara eksplisit meminta penjelasan atau cerita. "
-    "ATURAN STOP: jika pengguna minta berhenti/diam/stop (bahasa apapun), SELALU pakai "
-    "command ##kup##. JANGAN pernah pakai command gerakan seperti mundur untuk itu. "
-    "ATURAN COMMAND: HANYA gunakan command dari daftar JSON berikut (kode command "
-    "tidak pernah diterjemahkan): "
-    + escaped_commands_json +
-    " Contoh: pengguna bilang 'ayo lompat' -> 'Ayo lompat! ##kjmp##'; "
-    "pengguna bilang \"let's jump\" -> \"Let's jump! ##kjmp##\". "
-    "ATURAN GERAKAN KHUSUS: jika pengguna minta gerakan pada bagian tubuh yang TIDAK ada "
-    "di daftar command (contoh: gelengkan kepala, tengok kiri-kanan, celingukan, toleh), "
-    "jawab singkat lalu pakai command ##motion## (BUKAN command dari daftar). Saat ini "
-    "hanya KEPALA yang bisa digerakkan khusus (menoleh kiri-kanan), kepala tidak bisa mengangguk. "
-    "Selalu taruh command di bagian PALING AKHIR jawaban dengan format ##kode##, "
-    "tanpa teks apapun setelahnya. Jika kalimat pengguna bukan permintaan gerakan "
-    "(misalnya cuma ngobrol), tetap jawab singkat dan pilih satu command yang cocok "
-    "dengan suasananya, atau ##khi## untuk sapaan."
-)
+SYSTEM_PROMPT = action_sequence.build_system_prompt(json.loads(commands_json_text))
+# Semua JSON contoh harus di-escape agar tidak menjadi placeholder LangChain.
+escaped_system_prompt = SYSTEM_PROMPT.replace("{", "{{").replace("}", "}}")
 
 prompt = ChatPromptTemplate.from_messages(
     [
-        ("system", SYSTEM_PROMPT),
+        ("system", escaped_system_prompt),
         MessagesPlaceholder(variable_name="messages"),
     ]
 )
@@ -120,7 +96,7 @@ with_message_history = RunnableWithMessageHistory(chain, get_session_history)
 # LOOP UTAMA
 # ================================================================
 if __name__ == "__main__":
-    print("Bittle siap! Silakan mulai berbicara.")
+    print("Bittle terhubung. Tunggu 'Talk...' sebelum mulai berbicara.")
 
     try:
         while True:
@@ -167,37 +143,33 @@ if __name__ == "__main__":
                             or response.additional_kwargs.get("thinking", ""))
 
             cleaned = strip_thinking(raw_text)
-            description, dogcommand = extract_final_reply(cleaned) if cleaned else ("", None)
+            try:
+                description, actions = action_sequence.parse_reply(
+                    cleaned or "", VALID_COMMANDS, request_text=user_input
+                )
+            except action_sequence.ActionPlanError as e:
+                print(f"[Rencana ditolak] {e}")
+                text_to_speech_stream("Maaf, rangkaian gerakannya belum bisa kubaca. Coba lagi ya.", lang="id")
+                continue
 
             # --- Eksekusi ---
             if not description:
                 print(f"[Peringatan] AI tidak menghasilkan jawaban final [{_elapsed:.1f}s].")
                 text_to_speech_stream("Maaf, aku belum sempat mikir jawabannya. Coba lagi ya.", lang="id")
 
-            elif dogcommand == "motion":
-                # Gerakan motor khusus: LLM menyusun rencana, divalidasi ketat, baru dieksekusi
-                print(f"[Bittle]: {description}  (gerakan khusus)  [{_elapsed:.1f}s]")
-                text_to_speech_stream(description, lang=detected_lang)
+            elif actions:
                 try:
-                    steps, warnings = motion_gen.plan_from_request(model, user_input)
+                    # Rencanakan setiap aksi kepala secara terpisah dan periksa
+                    # SELURUH rangkaian sebelum robot melakukan gerakan pertama.
+                    prepared, warnings = action_sequence.prepare_actions(model, actions, VALID_COMMANDS)
                     for w in warnings:
                         print(f"[Validasi gerakan] {w}")
-                    if steps:
-                        motion_gen.execute_plan(robot, steps, dry_run=MOTION_DRY_RUN)
-                    else:
-                        print("[Gerakan] Tidak ada langkah valid, tidak ada yang dijalankan.")
+                    print(f"[Bittle]: {description}  ({len(prepared)} aksi)  [AI {_elapsed:.1f}s]")
+                    text_to_speech_stream(description, lang=detected_lang)
+                    action_sequence.execute_actions(robot, prepared, VALID_COMMANDS, dry_run=ACTION_DRY_RUN)
                 except Exception as e:
-                    print(f"[Error gerakan] {e}")
-
-            elif dogcommand and dogcommand in VALID_COMMANDS:
-                print(f"[Bittle]: {description}  (command: {dogcommand})  [{_elapsed:.1f}s]")
-                robot.send(dogcommand)                       # gerak dulu...
-                text_to_speech_stream(description, lang=detected_lang)  # ...sambil/lalu ngomong
-
-            elif dogcommand:
-                # Ada ##...## tapi bukan command valid -> jangan kirim ke robot
-                print(f"[Bittle]: {description}  (command TIDAK VALID: {dogcommand!r}, diabaikan)  [{_elapsed:.1f}s]")
-                text_to_speech_stream(description, lang=detected_lang)
+                    print(f"[Error rangkaian] {e}")
+                    text_to_speech_stream("Maaf, rangkaian gerakannya dihentikan. Coba lagi ya.", lang="id")
 
             else:
                 print(f"[Bittle]: {description}  (tidak ada command)  [{_elapsed:.1f}s]")
@@ -205,7 +177,10 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
         print("\nMenghentikan Bittle... mengembalikan ke posisi idle.")
-        robot.send("kup")
+        try:
+            robot.send("kup")
+        except Exception as e:
+            print(f"[Error stop] {e}")
     finally:
         robot.close()
         print(f"[Token] Ringkasan sesi: masuk={token_counter.prompt} keluar={token_counter.completion} "

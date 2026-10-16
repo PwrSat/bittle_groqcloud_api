@@ -26,7 +26,10 @@ The default starting point is INFO,
 which means that the logging module will automatically filter out any DEBUG messages.
 '''
 # logging.basicConfig(level=logging.DEBUG, format=FORMAT)
-logging.basicConfig(filename='./logfile.log', filemode='a+', level=logging.INFO, format=FORMAT)
+LOG_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+os.makedirs(LOG_DIRECTORY, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIRECTORY, 'logfile.log')
+logging.basicConfig(filename=LOG_FILE, filemode='a+', level=logging.INFO, format=FORMAT)
 logger = logging.getLogger(__name__)
 
 
@@ -50,7 +53,8 @@ if not config.useMindPlus:
 
     # printH("txt('lan'):", txt('lan'))
 
-with open("./logfile.log", "w+", encoding="utf-8") as logfile:
+# Pertahankan log sesi sebelumnya; berkas log bukan kode sumber.
+with open(LOG_FILE, "a", encoding="utf-8") as logfile:
     pass
 logger.info("ardSerial date: Jun. 20, 2024")
 
