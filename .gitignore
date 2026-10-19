@@ -6,3 +6,6 @@ venv/
 __pycache__/
 *.py[cod]
 *.log
+logs/measurements/
+# Model lokal untuk pengujian; jangan unggah berkas model ke Git.
+models/

@@ -1,5 +1,8 @@
 import os
 import re
+import math
+import time
+from collections.abc import Mapping
 
 # Matikan tracing LangSmith (tidak dipakai; kalau .env masih berisi
 # LANGCHAIN_TRACING_V2=true dari repo lama, ini bikin error 403 + delay).
@@ -110,7 +113,7 @@ def get_model(provider: str):
         # Catatan: "llama-3.3-70b-versatile" sudah pindah ke tier
         # Enterprise di Groq (butuh "Contact Sales"), diganti ke
         # openai/gpt-oss-120b yang masih di tier Production/free.
-        return ChatGroq(model="openai/gpt-oss-120b")
+        return ChatGroq(model="openai/gpt-oss-120b", temperature=0)
 
     elif provider == "glm":
         from langchain_ollama import ChatOllama
@@ -158,23 +161,125 @@ def is_exit_command(text: str) -> bool:
 
 
 class TokenCounter:
-    """Catat pemakaian token selama sesi (dibaca dari metadata respons LLM)."""
+    """Catat metadata token dan waktu panggilan, tanpa menyimpan isi percakapan.
 
-    def __init__(self):
+    ``snapshot()`` mengembalikan indeks untuk ``delta(snapshot)`` dan
+    ``records_since(snapshot)``. Nilai token yang tidak dilaporkan provider
+    ditulis ``None`` pada catatan/ringkasan; atribut lama prompt/completion
+    tetap menjumlahkan angka yang diketahui demi kompatibilitas.
+
+    ``rolling_summary()`` hanya mengamati panggilan dalam proses ini, bukan
+    sisa kuota provider. Jendela menggunakan waktu monoton saat respons dicatat,
+    dengan batas bawah terbuka: (sekarang - window_s, sekarang].
+    """
+
+    def __init__(self, clock=None):
         self.prompt = 0
         self.completion = 0
         self.calls = 0
+        self._clock = clock or time.monotonic
+        self._records = []
 
-    def add(self, response):
-        meta = getattr(response, "response_metadata", None) or {}
-        usage = meta.get("token_usage") or {}
-        # Groq: token_usage{prompt_tokens, completion_tokens}; Ollama: prompt_eval_count/eval_count
-        p = usage.get("prompt_tokens") or meta.get("prompt_eval_count") or 0
-        c = usage.get("completion_tokens") or meta.get("eval_count") or 0
-        self.prompt += p
-        self.completion += c
+    @staticmethod
+    def _mapping(value):
+        return value if isinstance(value, Mapping) else {}
+
+    @staticmethod
+    def _count(*values):
+        """Ambil hitungan pertama yang valid; nol berbeda dari tidak diketahui."""
+        for value in values:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+                continue
+            if value >= 0:
+                return int(value)
+        return None
+
+    def add(self, response, *, source="llm", elapsed_s=None):
+        """Tambahkan respons; tetap return (prompt, completion) dengan fallback 0.
+
+        ``elapsed_s`` adalah waktu invoke yang diukur pemanggil. Tidak ada
+        estimasi token dari teks apabila metadata provider tidak tersedia.
+        """
+        meta = self._mapping(getattr(response, "response_metadata", None))
+        usage = self._mapping(meta.get("token_usage"))
+        modern = self._mapping(getattr(response, "usage_metadata", None))
+        p = self._count(usage.get("prompt_tokens"), modern.get("input_tokens"),
+                        meta.get("prompt_eval_count"))
+        c = self._count(usage.get("completion_tokens"), modern.get("output_tokens"),
+                        meta.get("eval_count"))
+        total = p + c if p is not None and c is not None else self._count(
+            usage.get("total_tokens"), modern.get("total_tokens")
+        )
+        cached = self._count(
+            self._mapping(usage.get("prompt_tokens_details")).get("cached_tokens"),
+            self._mapping(modern.get("input_token_details")).get("cache_read"),
+        )
+        if (isinstance(elapsed_s, bool) or not isinstance(elapsed_s, (int, float))
+                or not math.isfinite(elapsed_s) or elapsed_s < 0):
+            elapsed_s = None
+        else:
+            elapsed_s = float(elapsed_s)
+        self._records.append({
+            "source": source if isinstance(source, str) and source else "llm",
+            "elapsed_s": elapsed_s,
+            "completed_at_monotonic_s": self._clock(),
+            "prompt_tokens": p,
+            "completion_tokens": c,
+            "total_tokens": total,
+            "cached_tokens": cached,
+            "usage_known": p is not None and c is not None,
+        })
+        self.prompt += p if p is not None else 0
+        self.completion += c if c is not None else 0
         self.calls += 1
-        return p, c
+        return (p if p is not None else 0), (c if c is not None else 0)
+
+    def snapshot(self):
+        """Checkpoint integer sebelum sebuah giliran atau kelompok panggilan."""
+        return len(self._records)
+
+    def records_since(self, snapshot=0):
+        """Salinan catatan JSON-serializable sejak checkpoint, tanpa teks/secrets."""
+        if (isinstance(snapshot, bool) or not isinstance(snapshot, int)
+                or not 0 <= snapshot <= len(self._records)):
+            raise ValueError("snapshot harus berasal dari counter ini")
+        return [dict(record) for record in self._records[snapshot:]]
+
+    @staticmethod
+    def _summarize(records):
+        def total_if_known(field):
+            values = [record[field] for record in records]
+            return sum(values) if all(value is not None for value in values) else None
+
+        result = {"calls": len(records)}
+        for field in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens"):
+            result[field] = total_if_known(field)
+        result["usage_known"] = all(record["usage_known"] for record in records)
+        result["missing_usage_calls"] = sum(not record["usage_known"] for record in records)
+        for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            result["known_" + field] = sum(record[field] or 0 for record in records)
+        return result
+
+    def delta(self, snapshot):
+        """Ringkasan semua panggilan sejak checkpoint, termasuk planner kepala."""
+        return self._summarize(self.records_since(snapshot))
+
+    def summary(self):
+        """Ringkasan sesi; angka parsial juga tersedia sebagai known_*_tokens."""
+        return self._summarize(self._records)
+
+    def rolling_summary(self, window_s=60.0):
+        """Pengamatan jendela waktu lokal; bukan perhitungan sisa kuota server."""
+        if (isinstance(window_s, bool) or not isinstance(window_s, (int, float))
+                or not math.isfinite(window_s) or window_s <= 0):
+            raise ValueError("window_s harus angka positif yang finite")
+        now = self._clock()
+        return self._summarize([
+            record for record in self._records
+            if now - window_s < record["completed_at_monotonic_s"] <= now
+        ])
 
     @property
     def total(self):

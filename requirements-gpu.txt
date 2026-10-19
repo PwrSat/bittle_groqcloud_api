@@ -1,0 +1,7 @@
+# Tambahan opsional untuk Whisper CUDA pada venv Windows proyek ini.
+# cuDNN disamakan dengan dispatcher 9.10.2.21 bawaan CTranslate2 4.8.2.
+# Pasang setelah requirements.txt; tidak perlu memasang CUDA Toolkit global.
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.10.2.21
+nvidia-cuda-runtime-cu12==12.9.79
+nvidia-cuda-nvrtc-cu12==12.9.86

@@ -92,6 +92,21 @@ chain = prompt | model
 config = {"configurable": {"session_id": "firstChat"}}
 with_message_history = RunnableWithMessageHistory(chain, get_session_history)
 
+
+def show_token_count(value):
+    return "tidak diketahui" if value is None else str(value)
+
+
+def print_token_measurement(checkpoint, complete=True):
+    turn = token_counter.delta(checkpoint)
+    recent = token_counter.rolling_summary()
+    total = turn["total_tokens"] if complete else None
+    print(f"[Ukur token] ucapan={show_token_count(total)} ({turn['calls']} respons, "
+          f"termasuk kepala) | respons 60s lokal={show_token_count(recent['total_tokens'])} | "
+          f"cache={show_token_count(turn['cached_tokens'])}; bukan sisa kuota server")
+    if not complete:
+        print("[Ukur token] Pemakaian permintaan AI yang gagal tidak diketahui.")
+
 # ================================================================
 # LOOP UTAMA
 # ================================================================
@@ -119,8 +134,10 @@ if __name__ == "__main__":
 
             # --- Kirim ke LLM (dengan tag bahasa terdeteksi) ---
             tagged_input = f"[bahasa: {detected_lang}] {user_input}"
+            token_checkpoint = token_counter.snapshot()
+            token_measurement_complete = True
 
-            _start = time.time()
+            _start = time.perf_counter()
             try:
                 response = with_message_history.invoke(
                     [HumanMessage(content=tagged_input)],
@@ -129,12 +146,14 @@ if __name__ == "__main__":
             except Exception as e:
                 # Misal kena rate limit Groq (429) atau internet putus
                 print(f"[Error LLM] {e}")
+                print_token_measurement(token_checkpoint, complete=False)
                 text_to_speech_stream("Maaf, aku lagi error. Coba lagi ya.", lang="id")
                 continue
-            _elapsed = time.time() - _start
-            p_tok, c_tok = token_counter.add(response)
-            print(f"[Token] masuk={p_tok} keluar={c_tok} | total sesi={token_counter.total} "
-                  f"({token_counter.calls} panggilan)")
+            _elapsed = time.perf_counter() - _start
+            token_counter.add(response, source="main", elapsed_s=_elapsed)
+            main_usage = token_counter.delta(token_checkpoint)
+            print(f"[Token] masuk={show_token_count(main_usage['prompt_tokens'])} "
+                  f"keluar={show_token_count(main_usage['completion_tokens'])}")
 
             # --- Ambil teks jawaban (fallback ke field cadangan kalau content kosong) ---
             raw_text = response.content
@@ -149,6 +168,7 @@ if __name__ == "__main__":
                 )
             except action_sequence.ActionPlanError as e:
                 print(f"[Rencana ditolak] {e}")
+                print_token_measurement(token_checkpoint)
                 text_to_speech_stream("Maaf, rangkaian gerakannya belum bisa kubaca. Coba lagi ya.", lang="id")
                 continue
 
@@ -158,22 +178,28 @@ if __name__ == "__main__":
                 text_to_speech_stream("Maaf, aku belum sempat mikir jawabannya. Coba lagi ya.", lang="id")
 
             elif actions:
+                planning_completed = False
                 try:
                     # Rencanakan setiap aksi kepala secara terpisah dan periksa
                     # SELURUH rangkaian sebelum robot melakukan gerakan pertama.
                     prepared, warnings = action_sequence.prepare_actions(model, actions, VALID_COMMANDS)
+                    planning_completed = True
                     for w in warnings:
                         print(f"[Validasi gerakan] {w}")
                     print(f"[Bittle]: {description}  ({len(prepared)} aksi)  [AI {_elapsed:.1f}s]")
                     text_to_speech_stream(description, lang=detected_lang)
                     action_sequence.execute_actions(robot, prepared, VALID_COMMANDS, dry_run=ACTION_DRY_RUN)
                 except Exception as e:
+                    if not planning_completed and not isinstance(e, action_sequence.ActionPlanError):
+                        token_measurement_complete = False
                     print(f"[Error rangkaian] {e}")
                     text_to_speech_stream("Maaf, rangkaian gerakannya dihentikan. Coba lagi ya.", lang="id")
 
             else:
                 print(f"[Bittle]: {description}  (tidak ada command)  [{_elapsed:.1f}s]")
                 text_to_speech_stream(description, lang=detected_lang)
+
+            print_token_measurement(token_checkpoint, complete=token_measurement_complete)
 
     except KeyboardInterrupt:
         print("\nMenghentikan Bittle... mengembalikan ke posisi idle.")
@@ -183,6 +209,8 @@ if __name__ == "__main__":
             print(f"[Error stop] {e}")
     finally:
         robot.close()
-        print(f"[Token] Ringkasan sesi: masuk={token_counter.prompt} keluar={token_counter.completion} "
-              f"total={token_counter.total} dalam {token_counter.calls} panggilan")
+        usage = token_counter.summary()
+        print(f"[Token] Ringkasan respons sukses: masuk={show_token_count(usage['prompt_tokens'])} "
+              f"keluar={show_token_count(usage['completion_tokens'])} "
+              f"total={show_token_count(usage['total_tokens'])} dalam {usage['calls']} respons")
         print("Program berhenti dengan bersih.")

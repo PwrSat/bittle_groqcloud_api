@@ -32,6 +32,14 @@ class NormalizeTranscriptTests(unittest.TestCase):
             ("duduk", "id", False),
         )
 
+    def test_removed_languages_do_not_become_the_indonesian_alias_output(self):
+        for language in ("ms", "af"):
+            with self.subTest(language=language):
+                self.assertEqual(
+                    stt.normalize_transcript("duduk", language, 0.22),
+                    ("duduk", "id", True),
+                )
+
     def test_known_whole_utterance_aliases_and_repetitions_are_corrected(self):
         examples = (
             ("Duh Duk", "id", 0.8),
@@ -118,11 +126,15 @@ class SpeechPipelineTests(unittest.TestCase):
         self.recognizer = FakeRecognizer(self.events)
         self.microphone = FakeMicrophone()
         self.model = Mock()
+        self.pcm_audio = object()
         self.set_transcript("halo Bittle")
         patches = (
             patch.object(stt, "_calibrated", False),
             patch.object(stt, "STT_LANGUAGE", None),
             patch.object(stt, "_get_model", return_value=self.model),
+            patch.object(
+                stt, "_decode_audio_for_detection", return_value=self.pcm_audio,
+            ),
             patch.object(
                 stt,
                 "_get_audio_devices",
@@ -135,6 +147,9 @@ class SpeechPipelineTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def set_transcript(self, text, language="id", confidence=0.8):
+        self.model.detect_language.return_value = (
+            language, confidence, [(language, confidence)],
+        )
         self.model.transcribe.return_value = (
             [SimpleNamespace(text=text)],
             SimpleNamespace(language=language, language_probability=confidence),
@@ -160,23 +175,43 @@ class SpeechPipelineTests(unittest.TestCase):
         self.assertEqual(stt.listen_and_transcribe(), ("halo Bittle", "id"))
         self.assertEqual(len(self.recognizer.calibration_calls), 1)
         self.assertEqual(len(self.recognizer.listen_calls), 2)
+        self.assertEqual(self.model.detect_language.call_count, 2)
         self.assertEqual(self.model.transcribe.call_count, 2)
 
     def test_auto_language_and_command_hints_are_passed_to_whisper(self):
         stt.listen_and_transcribe()
         args, kwargs = self.model.transcribe.call_args
-        self.assertIsInstance(args[0], io.BytesIO)
-        self.assertEqual(args[0].getvalue(), b"fake-wave-audio")
-        self.assertIsNone(kwargs["language"])
+        self.assertIs(args[0], self.pcm_audio)
+        self.assertIsNone(stt.STT_LANGUAGE)
+        self.assertEqual(kwargs["language"], "id")
+        self.assertFalse(kwargs["multilingual"])
         self.assertEqual(kwargs["hotwords"], stt.COMMAND_HINTS)
         self.assertTrue(kwargs["vad_filter"])
         self.assertIn("min_silence_duration_ms", kwargs["vad_parameters"])
         self.assertFalse(kwargs["condition_on_previous_text"])
+        from faster_whisper.vad import VadOptions
+
+        self.model.detect_language.assert_called_once()
+        detection_args, detection_kwargs = self.model.detect_language.call_args
+        self.assertEqual(detection_args, ())
+        self.assertEqual(
+            set(detection_kwargs), {"audio", "vad_filter", "vad_parameters"},
+        )
+        self.assertIs(detection_kwargs["audio"], self.pcm_audio)
+        self.assertTrue(detection_kwargs["vad_filter"])
+        self.assertIsInstance(detection_kwargs["vad_parameters"], VadOptions)
+        self.assertEqual(
+            detection_kwargs["vad_parameters"].min_silence_duration_ms, 500,
+        )
 
     def test_explicit_language_setting_is_passed_to_whisper(self):
         with patch.object(stt, "STT_LANGUAGE", "id"):
             stt.listen_and_transcribe()
-        self.assertEqual(self.model.transcribe.call_args.kwargs["language"], "id")
+        args, kwargs = self.model.transcribe.call_args
+        self.assertIsInstance(args[0], io.BytesIO)
+        self.assertEqual(args[0].getvalue(), b"fake-wave-audio")
+        self.assertEqual(kwargs["language"], "id")
+        self.model.detect_language.assert_not_called()
 
     def test_explicit_language_does_not_claim_detection_confidence(self):
         self.set_transcript("halo", language="id", confidence=1.0)

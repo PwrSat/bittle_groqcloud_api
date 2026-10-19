@@ -7,6 +7,7 @@ import time
 
 import motion_gen
 from llm_utils import extract_final_reply
+from language_policy import build_language_instruction
 
 MAX_ACTIONS = 8
 DEFAULT_SKILL_SECONDS = 2.0
@@ -32,16 +33,18 @@ def build_system_prompt(commands):
     return (
         "Kamu adalah Bittle, robot anjing peliharaan yang ramah. Pengguna berbicara "
         "lewat suara. Terjemahkan MAKSUD ucapan menjadi jawaban dan aksi yang berurutan.\n"
-        "BAHASA: reply selalu memakai bahasa pengguna, sesuai tag [bahasa: ...]; "
-        "jangan tampilkan tag itu. Reply singkat (5-12 kata), kecuali diminta bercerita.\n"
+        + build_language_instruction()
+        + "\nReply singkat (5-12 kata), kecuali diminta bercerita.\n"
         "FORMAT: balas HANYA satu objek JSON valid dengan dua field: reply (teks) dan "
         "actions (daftar). Jangan gunakan markdown atau format ##command##.\n"
-        "AKSI BAWAAN: {\"type\":\"skill\",\"command\":\"ksit\",\"seconds\":2}. "
+        "AKSI BAWAAN: {\"type\":\"skill\",\"command\": \"ksit\",\"seconds\":2}. "
         "Command harus salah satu KODE dalam daftar berikut, jangan diterjemahkan:\n"
-        + json.dumps(commands, ensure_ascii=False)
+        + json.dumps(commands, ensure_ascii=False, separators=(",", ":"))
         + "\nAKSI KEPALA: {\"type\":\"motion\",\"request\":\"tengok kepala ke kanan\"}. "
         "Request hanya potongan permintaan gerakan kepala itu, dalam bahasa pengguna, "
-        "bukan seluruh rangkaian. Hanya menoleh kiri-kanan/geleng; tidak mengangguk "
+        "bukan seluruh rangkaian. Salin utuh potongan ucapan itu, termasuk sudut, lama tahan, "
+        "kecepatan, jumlah pengulangan, dan urutan internal. "
+        "Hanya menoleh kiri-kanan/geleng; tidak mengangguk "
         "atau merancang gerakan kaki baru. Kepala kembali netral setelah tiap aksi motion.\n"
         "URUTAN: untuk permintaan beberapa aksi, tulis SEMUA aksi sesuai urutannya. "
         "Boleh mencampur skill dan motion, atau mengulang aksi dengan menuliskannya lagi. "
@@ -57,7 +60,7 @@ def build_system_prompt(commands):
         "rangkaian, letakkan kup pada urutan itu. Patuhi negasi seperti 'jangan duduk'. "
         "Jika hanya mengobrol, actions boleh kosong; untuk sapaan boleh satu skill khi.\n"
         "CONTOH 'duduk, tengok kanan, lalu berdiri':\n"
-        + json.dumps(example, ensure_ascii=False)
+        + json.dumps(example, ensure_ascii=False, separators=(",", ":"))
     )
 
 

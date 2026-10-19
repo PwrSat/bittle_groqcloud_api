@@ -52,8 +52,30 @@ RELEASE_HEAD_AFTER = True
 HEAD_NEUTRAL_SETTLE_S = 0.2
 HEAD_RELEASE_SETTLE_S = 0.3  # waktu firmware memproses 'i' sebelum perintah berikutnya
 
-RIGHT_WORDS = ("kanan", "right", "migi", "右")
-LEFT_WORDS = ("kiri", "left", "hidari", "左")
+RIGHT_WORDS = (
+    "kanan", "right", "migi", "右",
+    "droite", "direita", "derecha",
+    "يمين", "اليمين", "يمينا",
+    "दाईं", "दाहिने", "दाएँ", "दाएं", "दायाँ",
+    "오른쪽",
+)
+LEFT_WORDS = (
+    "kiri", "left", "hidari", "左",
+    "gauche", "esquerda", "izquierda",
+    "يسار", "اليسار", "يسارا",
+    "बाईं", "बाएँ", "बाएं", "बायाँ", "बायीं",
+    "왼쪽",
+)
+
+
+def _has_direction_word(text, words):
+    # Batas kata Latin mencegah "bright"/"copyright" dianggap "right".
+    # Aksara lain perlu cocok di dalam frasa: 向右看, 右を見て, 오른쪽으로.
+    return any(
+        bool(re.search(r"(?<!\w)" + re.escape(word) + r"(?!\w)", text))
+        if word.isascii() else word in text
+        for word in words
+    )
 
 
 # ================================================================
@@ -160,9 +182,11 @@ def enforce_direction(steps, request_text):
     (kanan ATAU kiri), pastikan gerakan kepala pertama searah dengan itu; kalau tidak,
     balik tanda semua sudut kepala. (Permintaan yang menyebut keduanya dibiarkan.)
     """
-    text = (request_text or "").lower()
-    has_r = any(w in text for w in RIGHT_WORDS)
-    has_l = any(w in text for w in LEFT_WORDS)
+    text = (request_text or "").casefold()
+    # Hanya tanda vokal Arab; tanda gabung Hindi/Jepang/Korea dipertahankan.
+    text = re.sub(r"[\u064b-\u0652\u0670]", "", text)
+    has_r = _has_direction_word(text, RIGHT_WORDS)
+    has_l = _has_direction_word(text, LEFT_WORDS)
     if has_r == has_l:
         return steps, []
 
@@ -224,13 +248,26 @@ def _move_to(robot, current, target, dry_run):
 # 4. MINTA LLM + EKSEKUSI
 # ================================================================
 def plan_from_request(model, request_text):
-    """Panggil LLM sekali (tanpa riwayat chat) dan kembalikan (steps, warnings)."""
+    """Pakai pola kepala umum; permintaan lain tetap memakai perencana LLM."""
+    from head_templates import plan_for_common_request
+
+    template = plan_for_common_request(request_text)
+    if template is not None:
+        steps, warnings = validate_plan(template)
+        # Validation can clamp holds without a warning. Never silently alter a
+        # template if runtime limits changed: retain the original LLM fallback.
+        if steps == template["steps"] and not warnings:
+            steps, warnings = enforce_direction(steps, request_text)
+            if not warnings:
+                return steps, []
+
     from langchain_core.messages import SystemMessage, HumanMessage
     from llm_utils import strip_thinking, token_counter
 
+    started = time.perf_counter()
     resp = model.invoke([SystemMessage(content=build_motion_prompt()),
                          HumanMessage(content=request_text)])
-    token_counter.add(resp)
+    token_counter.add(resp, source="head_planner", elapsed_s=time.perf_counter() - started)
     raw = resp.content or ""
     if not raw.strip():
         raw = resp.additional_kwargs.get("reasoning_content", "") or ""

@@ -110,26 +110,23 @@ class SequenceApplicationTests(unittest.TestCase):
             namespace = runpy.run_path(str(ROOT / "BittleLLM.py"), run_name="__main__")
         return events, counter, namespace
 
-    def test_main_prepares_head_then_executes_mixed_sequence_and_exits(self):
+    def test_main_prepares_local_head_then_executes_mixed_sequence_with_one_call(self):
         reply = "Siap, aku duduk, tengok kanan, lalu berdiri!"
         outer = json.dumps({"reply": reply, "actions": [
             {"type": "skill", "command": "ksit", "seconds": 2},
             {"type": "motion", "request": "tengok kepala ke kanan"},
             {"type": "skill", "command": "kup", "seconds": 1},
         ]})
-        head = json.dumps({"steps": [{"joints": {"0": 30}, "hold": 0.3}]})
-        events, counter, namespace = self.run_application([outer, head])
+        events, counter, namespace = self.run_application([outer])
 
         model_events = [(i, event[1]) for i, event in enumerate(events) if event[0] == "model"]
-        self.assertEqual(len(model_events), 2)
+        self.assertEqual(len(model_events), 1)
         # Formatting the real prompt must preserve literal JSON braces.
         self.assertIn('"actions"', model_events[0][1][0].content)
         self.assertIn('"command": "ksit"', model_events[0][1][0].content)
         self.assertEqual(model_events[0][1][-1].content, f"[bahasa: id] {REQUEST}")
-        self.assertEqual(model_events[1][1][-1].content, "tengok kepala ke kanan")
-
         first_send = next(i for i, event in enumerate(events) if event[0] == "send")
-        self.assertLess(model_events[1][0], first_send, "head must be planned before the first skill")
+        self.assertLess(model_events[0][0], first_send)
         movements = [event for event in events if event[0] in {"send", "joints", "close"}]
         self.assertEqual(movements[0], ("send", "ksit"))
         self.assertEqual([event for event in movements if event[0] == "send"], [
@@ -143,7 +140,7 @@ class SequenceApplicationTests(unittest.TestCase):
         self.assertEqual([event for event in events if event[0] in {"whisper", "connect"}], [
             ("whisper",), ("connect",),
         ])
-        self.assertEqual(counter.calls, 2)
+        self.assertEqual(counter.calls, 1, "common head motion must not add an API call")
         self.assertIn(("speech", reply), events)
         self.assertIn(("speech", FAREWELL), events)
         # Exercise the real RunnableWithMessageHistory, not a stub implementation.
@@ -166,7 +163,7 @@ class SequenceApplicationTests(unittest.TestCase):
     def test_empty_head_plan_prevents_the_earlier_sit(self):
         outer = json.dumps({"reply": "Baik!", "actions": [
             {"type": "skill", "command": "ksit"},
-            {"type": "motion", "request": "tengok kepala ke kanan"},
+            {"type": "motion", "request": "tengok kepala ke kanan sejauh 30 derajat"},
         ]})
         events, counter, _ = self.run_application([outer, '{"steps": []}'])
         self.assertEqual([event for event in events if event[0] in {"send", "joints", "close"}], [
